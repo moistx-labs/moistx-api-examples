@@ -1,0 +1,8 @@
+{
+"type": "FeatureCollection",
+"name": "example_field",
+"crs": { "type": "name", "properties": { "name": "urn:ogc:def:crs:OGC:1.3:CRS84" } },
+"features": [
+{ "type": "Feature", "properties": { "id": null }, "geometry": { "type": "MultiPolygon", "coordinates": [ [ [ [ 22.108100872425641, 39.448852288329505 ], [ 22.110796753432506, 39.448548340961082 ], [ 22.1104861985126, 39.446784124713943 ], [ 22.107763887299786, 39.447041819221951 ], [ 22.108100872425641, 39.448852288329505 ] ] ] ] } }
+]
+}

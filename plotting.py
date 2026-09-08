@@ -1,14 +1,16 @@
 """
-Plotting helpers for 02_irrigation_detection.ipynb.
+Plotting helpers for 02_irrigation_detection.ipynb and 03_field_soil_moisture_map.ipynb.
 
 Public API
 ----------
 plot_field_buffer_map – basemap showing the field polygon and its buffer ring
 plot_cluster_map      – scatter map of buffer pixels by reference/irrigated cluster
 plot_sm_events        – field/reference SM chart with rain & irrigation markers
+plot_pixel_sm_map     – per-pixel SM map for a single date, continuous color scale
 """
 from __future__ import annotations
 
+import branca.colormap
 import folium
 import pandas as pd
 import plotly.graph_objects as go
@@ -17,6 +19,31 @@ _ESRI_WORLD_IMAGERY = (
     "https://server.arcgisonline.com/ArcGIS/rest/services/"
     "World_Imagery/MapServer/tile/{z}/{y}/{x}"
 )
+
+# Sequential ramp for soil moisture (a magnitude, not a polarity): one hue, light→dark,
+# rather than a multi-hue "rainbow" scale — keeps the encoding monotone and
+# colorblind-safe. Light = low SM, dark = high SM, matching "more water → deeper blue".
+_SM_COLOR_RAMP = [
+    "#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5",
+    "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b",
+]
+
+# branca's colormap legend renders on top of the raw satellite tiles with no background
+# of its own, and its tick/caption text is black by default — both get lost over the
+# darker parts of the imagery. Give the legend a translucent dark panel and white text
+# so it stays legible regardless of what's underneath.
+_LEGEND_STYLE = """
+<style>
+.legend {
+    background: rgba(13, 13, 12, 0.72);
+    padding: 6px 12px 8px;
+    border-radius: 6px;
+}
+.legend text {
+    fill: #ffffff;
+}
+</style>
+"""
 
 
 def _esri_map(center: list[float], zoom_start: int) -> folium.Map:
@@ -91,6 +118,70 @@ def plot_cluster_map(
             tooltip=f'irrigated  {row["mean_sm"]:.1f} vol%  {row["jump_count"]} jumps',
         ).add_to(m)
 
+    return m
+
+
+def plot_pixel_sm_map(
+    field_geom,
+    pixel_df: pd.DataFrame,
+    center: list[float],
+    zoom_start: int = 17,
+) -> folium.Map:
+    """
+    Per-pixel soil moisture map for a single acquisition date, zoomed to the field.
+
+    The color scale auto-stretches to *this date's* own min/max rather than a fixed
+    season-wide range: the field-wide spread on any given day is often just a couple
+    of vol%, and pinning the scale to the full season would compress that into a
+    near-uniform shade, hiding the spatial pattern the map exists to show. The
+    trade-off is that color is no longer comparable across dates — the same shade of
+    blue can mean a different absolute vol% on different days. This date's actual
+    range is shown in the legend caption, and hovering a pixel gives its exact value.
+
+    Each pixel is drawn as a circle on a single-hue sequential scale (light = low SM,
+    dark blue = high SM) — soil moisture is a magnitude, not a two-sided quantity, so
+    one hue keeps the encoding monotone and unambiguous rather than cycling through
+    unrelated colors.
+
+    Parameters
+    ----------
+    field_geom : Shapely geometry — field boundary, drawn as an outline
+    pixel_df   : rows for a single datetime only (columns: lon, lat, sm)
+    center     : [lat, lon] map center
+    """
+    lo, hi = float(pixel_df["sm"].min()), float(pixel_df["sm"].max())
+    if lo == hi:
+        vmin, vmax = lo - 0.5, hi + 0.5
+    else:
+        # Small padding on each end so the most extreme pixel isn't pinned to the very
+        # tip of the ramp, which reads as clipped/saturated.
+        pad = (hi - lo) * 0.08
+        vmin, vmax = lo - pad, hi + pad
+
+    colormap = branca.colormap.LinearColormap(colors=_SM_COLOR_RAMP, vmin=vmin, vmax=vmax)
+    colormap.caption = f"Surface Soil Moisture (vol%) — this date: {lo:.1f}–{hi:.1f}"
+
+    m = _esri_map(center, zoom_start)
+    m.get_root().header.add_child(folium.Element(_LEGEND_STYLE))
+
+    folium.GeoJson(
+        field_geom.__geo_interface__,
+        style_function=lambda _: {"color": "#FFFFFF", "weight": 2, "fillOpacity": 0},
+        tooltip="Field boundary",
+    ).add_to(m)
+
+    # A thin white ring (rather than a dark one) keeps each pixel legible against the
+    # satellite basemap regardless of the pixel's own color — the lightest ramp steps
+    # would otherwise disappear into bright soil/imagery with a dark outline instead.
+    for _, row in pixel_df.iterrows():
+        folium.CircleMarker(
+            [row["lat"], row["lon"]], radius=7,
+            color="#ffffff", weight=1, opacity=0.9,
+            fill=True, fill_color=colormap(row["sm"]), fill_opacity=0.95,
+            tooltip=f'{row["sm"]:.1f} vol%',
+        ).add_to(m)
+
+    colormap.add_to(m)
     return m
 
 

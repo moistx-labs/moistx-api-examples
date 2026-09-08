@@ -15,7 +15,7 @@ analyse satellite-derived surface soil moisture (SSM, 0–5 cm) data.
   | Endpoint | Used by |
   |----------|---------|
   | `GET /get/point/soil-moisture` | `01_getting_started.ipynb` — time series for a single lat/lon |
-  | `POST /get/file/soil-moisture` | `02_irrigation_detection.ipynb` — clipped GeoTIFFs for a polygon |
+  | `POST /get/file/soil-moisture` | `02_irrigation_detection.ipynb`, `03_field_soil_moisture_map.ipynb` — clipped GeoTIFFs for a polygon |
 
   Both accept a maximum 365-day date range per request; the file endpoint additionally
   caps the request polygon at 1,000 hectares.
@@ -50,10 +50,16 @@ Both install the same set of packages, including JupyterLab — skip that part o
 `requirements.txt`/`environment.yml` if you're already running notebooks through VS Code,
 Colab, or another environment that provides its own kernel.
 
-Get an API key from [moistx.com/dashboard](https://moistx.com/dashboard), then either:
+Get an API key from [moistx.com/dashboard](https://moistx.com/dashboard), then create a
+`.env` file in the repo root with:
 
-- set the environment variable `MOISTX_API_KEY=your_key`, or
-- paste it directly into the `API_KEY` variable in each notebook's configuration cell.
+```
+MOISTX_API_KEY=your_key
+```
+
+(copy `.env.example` as a starting point). Each notebook's setup cell loads it
+automatically via `python-dotenv`. `.env` is gitignored, so your key is never committed —
+never commit it or paste it directly into a notebook cell.
 
 ## Notebooks
 
@@ -77,29 +83,38 @@ A more advanced workflow that detects irrigation and rain events from SSM time s
 The reusable logic behind this notebook lives in `helpers.py` (detection pipeline) and
 `plotting.py` (the chart), keeping the notebook itself to short, readable calls.
 
+### `03_field_soil_moisture_map.ipynb`
+
+Visualizes **per-pixel** (not averaged) surface soil moisture inside a field boundary:
+
+1. Load a field boundary from any OGR-supported vector file (GeoJSON, Shapefile, GeoPackage, ...)
+2. Download clipped GeoTIFFs for the field via `POST /get/file/soil-moisture` (cached locally under `cache/`)
+3. Extract every pixel's soil moisture value for each acquisition date
+4. Pick a date from an interactive dropdown to view that date's pixel-level soil moisture on a map, colored on a fixed scale so colors stay comparable across dates
+
 ## `helpers.py`
 
-Standalone functions used by `02_irrigation_detection.ipynb`:
-
-| Function | Purpose |
-|----------|---------|
-| `compute_ring_buffer` | Build a ring-shaped buffer polygon around a field |
-| `download_sm_files` | Download & locally cache a ZIP of clipped GeoTIFFs from the API |
-| `load_pixel_timeseries` | Extract per-pixel SM values from a list of GeoTIFFs into a DataFrame |
-| `compute_pixel_features` | Compute per-pixel temporal features (mean, std, jump count) |
-| `find_reference_pixels` | K-means clustering to identify non-irrigated reference pixels |
-| `compute_jump_fractions` | Per-acquisition fraction of buffer pixels showing a SM jump |
-| `time_centered_smooth` | Rolling mean centered in calendar time (not acquisition count) |
-| `detect_events` | Classify SM rises as rain or irrigation |
-| `summarise_events` | Print a plain-English summary of detected events |
+| Function | Purpose | Used by |
+|----------|---------|---------|
+| `load_field_geometry` | Load a field boundary from any OGR-supported vector file, reprojected to WGS84 | `03` |
+| `compute_ring_buffer` | Build a ring-shaped buffer polygon around a field | `02` |
+| `download_sm_files` | Download & locally cache a ZIP of clipped GeoTIFFs from the API | `02`, `03` |
+| `load_pixel_timeseries` | Extract per-pixel SM values from a list of GeoTIFFs into a DataFrame | `02`, `03` |
+| `compute_pixel_features` | Compute per-pixel temporal features (mean, std, jump count) | `02` |
+| `find_reference_pixels` | K-means clustering to identify non-irrigated reference pixels | `02` |
+| `compute_jump_fractions` | Per-acquisition fraction of buffer pixels showing a SM jump | `02` |
+| `time_centered_smooth` | Rolling mean centered in calendar time (not acquisition count) | `02` |
+| `detect_events` | Classify SM rises as rain or irrigation | `02` |
+| `summarise_events` | Print a plain-English summary of detected events | `02` |
 
 ## `plotting.py`
 
-| Function | Purpose |
-|----------|---------|
-| `plot_field_buffer_map` | Basemap showing the field polygon and its buffer ring |
-| `plot_cluster_map` | Scatter map of buffer pixels by reference/irrigated cluster |
-| `plot_sm_events` | Build the field/reference SM chart with rain & irrigation event markers |
+| Function | Purpose | Used by |
+|----------|---------|---------|
+| `plot_field_buffer_map` | Basemap showing the field polygon and its buffer ring | `02` |
+| `plot_cluster_map` | Scatter map of buffer pixels by reference/irrigated cluster | `02` |
+| `plot_sm_events` | Build the field/reference SM chart with rain & irrigation event markers | `02` |
+| `plot_pixel_sm_map` | Per-pixel SM map for a single date, continuous color scale | `03` |
 
 ## `cache/`
 

@@ -3,6 +3,7 @@ MoistX irrigation detection helpers.
 
 Public API
 ----------
+load_field_geometry   – load a field boundary from any OGR-supported vector file
 compute_ring_buffer   – auto-generate a ring buffer polygon around a field
 download_sm_files     – download & cache GeoTIFFs from the MoistX file endpoint
 load_pixel_timeseries – extract per-pixel SM values from a list of GeoTIFFs
@@ -59,6 +60,32 @@ def _parse_filename_meta(filepath: str) -> tuple[pd.Timestamp | None, str | None
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+def load_field_geometry(filepath: str) -> tuple:
+    """
+    Load a field boundary from any OGR-supported vector file (GeoJSON, Shapefile,
+    GeoPackage, KML, ...) via geopandas.read_file.
+
+    Multiple features/parts are unioned into a single geometry so the rest of the
+    pipeline (buffering, clipping, WKT for the API) can treat the field as one shape.
+    Reprojects to WGS84 (EPSG:4326) if the source file uses a different CRS.
+
+    Returns (field_geom, field_wkt).
+    """
+    gdf = gpd.read_file(filepath)
+    if gdf.empty:
+        raise ValueError(f"{filepath} contains no features")
+    if gdf.crs is None:
+        raise ValueError(f"{filepath} has no CRS defined")
+    gdf = gdf.to_crs("EPSG:4326")
+
+    try:
+        field_geom = gdf.geometry.union_all()
+    except AttributeError:
+        field_geom = gdf.geometry.unary_union
+
+    return field_geom, field_geom.wkt
+
 
 def compute_ring_buffer(
     field_wkt: str,
