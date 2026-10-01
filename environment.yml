@@ -20,6 +20,7 @@ dependencies:
 
   # Visualization
   - plotly>=5.18
+  - python-kaleido>=1.0   # static PNG copies of plotly charts for GitHub (needs Chrome: run `plotly_get_chrome` once)
   - folium>=0.16
   - branca>=0.7
 

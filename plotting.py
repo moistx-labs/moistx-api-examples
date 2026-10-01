@@ -50,7 +50,7 @@ _LEGEND_STYLE = """
     padding: 6px 12px 8px;
     border-radius: 6px;
     transform: scale(1.3);
-    transform-origin: bottom right;
+    transform-origin: top right;  /* grow downward, away from the layer control above */
 }
 .legend text {
     fill: #ffffff;
@@ -59,11 +59,19 @@ _LEGEND_STYLE = """
 """
 
 
+# NDVI quality flag colors, matching the color table stored in the flag GeoTIFFs
+_QUALITY_COLORS = {"good": "#1a9850", "poor": "#fdae61", "unknown": "#bdbdbd"}
+
+
 def _esri_map(center: list[float], zoom_start: int) -> folium.Map:
-    return folium.Map(
-        location=center, zoom_start=zoom_start,
-        tiles=_ESRI_WORLD_IMAGERY, attr="Esri WorldImagery",
-    )
+    # Added as its own TileLayer so it can be kept out of the layer control: passed via
+    # folium.Map(tiles=url) it shows up there as a radio button labelled with the raw URL.
+    m = folium.Map(location=center, zoom_start=zoom_start, tiles=None)
+    folium.TileLayer(
+        tiles=_ESRI_WORLD_IMAGERY, attr="Esri World Imagery",
+        name="Satellite imagery", control=False,
+    ).add_to(m)
+    return m
 
 
 def plot_field_buffer_map(
@@ -156,10 +164,16 @@ def plot_pixel_sm_map(
     one hue keeps the encoding monotone and unambiguous rather than cycling through
     unrelated colors.
 
+    If pixel_df has the `sensors`/`quality` columns from load_pixel_timeseries, the
+    hover tooltip shows them too, and when quality flags are available a second
+    "Quality flag" layer (good / poor NDVI quality) can be switched on from the
+    layer control in the top-right corner.
+
     Parameters
     ----------
     field_geom : Shapely geometry — field boundary, drawn as an outline
-    pixel_df   : rows for a single datetime only (columns: lon, lat, sm)
+    pixel_df   : rows for a single datetime only (columns: lon, lat, sm,
+                 optionally sensors, quality)
     center     : [lat, lon] map center
     """
     lo, hi = float(pixel_df["sm"].min()), float(pixel_df["sm"].max())
@@ -179,20 +193,43 @@ def plot_pixel_sm_map(
 
     folium.GeoJson(
         field_geom.__geo_interface__,
+        name="Field boundary",
         style_function=lambda _: {"color": "#FFFFFF", "weight": 2, "fillOpacity": 0},
         tooltip="Field boundary",
     ).add_to(m)
 
+    def _tooltip(row) -> str:
+        parts = [f'{row["sm"]:.1f} vol%']
+        if pd.notna(row.get("quality")):
+            parts.append(f'quality: {row["quality"]}')
+        if pd.notna(row.get("sensors")):
+            parts.append(str(row["sensors"]))
+        return " · ".join(parts)
+
     # A thin white ring (rather than a dark one) keeps each pixel legible against the
     # satellite basemap regardless of the pixel's own color — the lightest ramp steps
     # would otherwise disappear into bright soil/imagery with a dark outline instead.
+    sm_layer = folium.FeatureGroup(name="Soil moisture", overlay=True, show=True).add_to(m)
     for _, row in pixel_df.iterrows():
         folium.CircleMarker(
             [row["lat"], row["lon"]], radius=7,
             color="#ffffff", weight=1, opacity=0.9,
             fill=True, fill_color=colormap(row["sm"]), fill_opacity=0.95,
-            tooltip=f'{row["sm"]:.1f} vol%',
-        ).add_to(m)
+            tooltip=_tooltip(row),
+        ).add_to(sm_layer)
+
+    has_quality = "quality" in pixel_df and pixel_df["quality"].notna().any()
+    if has_quality:
+        # Same colors as the flag GeoTIFF's own color table
+        quality_layer = folium.FeatureGroup(name="Quality flag", overlay=True, show=False).add_to(m)
+        for _, row in pixel_df[pixel_df["quality"].notna()].iterrows():
+            folium.CircleMarker(
+                [row["lat"], row["lon"]], radius=7,
+                color="#ffffff", weight=1, opacity=0.9,
+                fill=True, fill_color=_QUALITY_COLORS.get(row["quality"], "#bdbdbd"), fill_opacity=0.95,
+                tooltip=_tooltip(row),
+            ).add_to(quality_layer)
+        folium.LayerControl(collapsed=False).add_to(m)
 
     colormap.add_to(m)
     return m
@@ -409,8 +446,8 @@ def plot_sm_events(
     field_ts, field_sm_std : Series(datetime → value) — field mean SM and its std
     ref_ts, ref_sm_std      : Series(datetime → value) — smoothed reference SM and its std
     rain_ev, irr_ev         : subsets of the events DataFrame for each event type
-                              (columns: datetime, field_sm, field_delta, confidence,
-                              buffer_fraction)
+                              (columns: datetime, field_sm, field_delta, anomaly_delta,
+                              confidence, buffer_fraction)
     title                   : chart title
 
     Returns
@@ -476,10 +513,11 @@ def plot_sm_events(
                 size=8 + 14 * irr_ev["confidence"],
                 opacity=0.3 + 0.7 * irr_ev["confidence"],
             ),
-            customdata=irr_ev[["confidence", "field_delta"]].values,
+            customdata=irr_ev[["confidence", "anomaly_delta", "field_delta"]].values,
             hovertemplate=(
                 "Irrigation<br>confidence: %{customdata[0]:.2f}"
-                "<br>ΔSM: %{customdata[1]:+.1f} vol%<extra></extra>"
+                "<br>Δ vs reference: %{customdata[1]:+.1f} vol%"
+                "<br>field ΔSM: %{customdata[2]:+.1f} vol%<extra></extra>"
             ),
         ))
 

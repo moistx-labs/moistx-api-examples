@@ -14,6 +14,7 @@ scikit-learn>=1.3
 
 # Visualization
 plotly>=5.18
+kaleido>=1.0    # static PNG copies of plotly charts, so they show on GitHub (needs Chrome: run `plotly_get_chrome` once)
 folium>=0.16
 branca>=0.7
 

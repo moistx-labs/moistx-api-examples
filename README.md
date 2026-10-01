@@ -20,6 +20,16 @@ analyse satellite-derived surface soil moisture (SSM, 0–5 cm) data.
   Both accept a maximum 365-day date range per request; the file endpoint additionally
   caps the request polygon at 1,000 hectares.
 
+- **Sensors and quality flag:** besides soil moisture, the API reports per pixel
+  - `sensors` — which sensors contributed to the value (`Sentinel-1 ascending`,
+    `Sentinel-1 descending`, `Sentinel-2`, `Landsat-8/9`)
+  - `quality` — an NDVI quality flag from the most recent valid optical NDVI within 30 days:
+    `good` (NDVI < 0.75) or `poor` (NDVI ≥ 0.75, dense vegetation — less reliable estimate)
+
+  The point endpoint returns them in the JSON response; the file endpoint adds them as
+  separate `_sensors` / `_flag` GeoTIFFs when called with `include_metadata=true`. Both are
+  `null` / absent in regions where this information isn't available yet.
+
 ### Data license & attribution
 
 Data is free to use, share, and modify (including commercial use), provided you attribute
@@ -67,17 +77,20 @@ never commit it or paste it directly into a notebook cell.
 
 The minimal end-to-end example: authenticate, query soil moisture for a single point
 (`GET /get/point/soil-moisture`) over a year, load the response into a pandas DataFrame,
-and plot a time series coloured by data source (`S2`, `S1_asc`, `S1_desc`, `L89`, or
-`harmonized` where available).
+and plot a time series coloured by the contributing sensors, with `poor`-quality
+acquisitions drawn as hollow markers.
 
 ### `02_irrigation_detection.ipynb`
 
 A more advanced workflow that detects irrigation and rain events from SSM time series:
 
 1. Auto-generate a ring buffer around a field polygon
-2. Download clipped GeoTIFFs for the field and buffer via `POST /get/file/soil-moisture` (cached locally under `cache/`)
+2. Download clipped GeoTIFFs for the field and buffer via `POST /get/file/soil-moisture` (cached locally under `cache/`),
+   optionally dropping pixel observations flagged `poor` quality (`EXCLUDE_POOR_QUALITY`)
 3. Cluster buffer pixels into non-irrigated reference vs. potentially-irrigated groups (K-means)
-4. Classify field SM rises as **rain** (widespread jump across the buffer) or **irrigation** (localised jump, buffer stable)
+4. Compare the field with the reference on each acquisition (field − reference), so weather and sensor offsets
+   cancel out, and classify wetting as **rain** (widespread jump across the buffer) or **irrigation**
+   (the field wets more than its surroundings while the buffer stays stable)
 5. Summarise detected events with a confidence score
 
 The reusable logic behind this notebook lives in `helpers.py` (detection pipeline) and
@@ -89,8 +102,8 @@ Visualizes **per-pixel** (not averaged) surface soil moisture inside a field bou
 
 1. Load a field boundary from any OGR-supported vector file (GeoJSON, Shapefile, GeoPackage, ...)
 2. Download clipped GeoTIFFs for the field via `POST /get/file/soil-moisture` (cached locally under `cache/`)
-3. Extract every pixel's soil moisture value for each acquisition date
-4. Pick a date from an interactive dropdown to view that date's pixel-level soil moisture on a map, colored on a fixed scale so colors stay comparable across dates
+3. Extract every pixel's soil moisture value, quality flag and sensors for each acquisition date
+4. Pick a date from an interactive calendar to view that date's pixel-level soil moisture on a map (hover for quality and sensors), with an optional quality flag layer
 
 ## `helpers.py`
 
@@ -98,8 +111,8 @@ Visualizes **per-pixel** (not averaged) surface soil moisture inside a field bou
 |----------|---------|---------|
 | `load_field_geometry` | Load a field boundary from any OGR-supported vector file, reprojected to WGS84 | `03` |
 | `compute_ring_buffer` | Build a ring-shaped buffer polygon around a field | `02` |
-| `download_sm_files` | Download & locally cache a ZIP of clipped GeoTIFFs from the API | `02`, `03` |
-| `load_pixel_timeseries` | Extract per-pixel SM values from a list of GeoTIFFs into a DataFrame | `02`, `03` |
+| `download_sm_files` | Download & locally cache a ZIP of clipped GeoTIFFs from the API (optionally with sensors/quality files) | `02`, `03` |
+| `load_pixel_timeseries` | Extract per-pixel SM values (plus sensors and quality flag, when downloaded) from a list of GeoTIFFs into a DataFrame | `02`, `03` |
 | `compute_pixel_features` | Compute per-pixel temporal features (mean, std, jump count) | `02` |
 | `find_reference_pixels` | K-means clustering to identify non-irrigated reference pixels | `02` |
 | `compute_jump_fractions` | Per-acquisition fraction of buffer pixels showing a SM jump | `02` |
@@ -114,10 +127,10 @@ Visualizes **per-pixel** (not averaged) surface soil moisture inside a field bou
 | `plot_field_buffer_map` | Basemap showing the field polygon and its buffer ring | `02` |
 | `plot_cluster_map` | Scatter map of buffer pixels by reference/irrigated cluster | `02` |
 | `plot_sm_events` | Build the field/reference SM chart with rain & irrigation event markers | `02` |
-| `plot_pixel_sm_map` | Per-pixel SM map for a single date, continuous color scale | `03` |
+| `plot_pixel_sm_map` | Per-pixel SM map for a single date, continuous color scale, optional quality flag layer | `03` |
 
 ## `cache/`
 
-Downloaded GeoTIFFs are cached here, keyed by an MD5 hash of the request polygon and date
-range — re-running a notebook with the same parameters reads from disk instead of hitting
+Downloaded GeoTIFFs are cached here, keyed by an MD5 hash of the request polygon, date
+range and whether sensors/quality files were requested — re-running a notebook with the same parameters reads from disk instead of hitting
 the API again. Safe to delete at any time; it will be repopulated on the next run.
